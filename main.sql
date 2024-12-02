@@ -1,6 +1,7 @@
 with ga AS(
 -- GA4テーブル
   SELECT *,
+  (SELECT value.int_value FROM UNNEST(event_params) WHERE key ='ga_session_id') AS ga_session_id,
   (SELECT value.string_value FROM UNNEST(event_params) WHERE key='source') AS event_traffic_source,
   (SELECT value.string_value FROM UNNEST(event_params) WHERE key='medium') AS event_traffic_medium,
   (SELECT value.string_value FROM UNNEST(event_params) WHERE key='campaign') AS event_traffic_campaign,
