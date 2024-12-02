@@ -1,0 +1,6 @@
+# BigQueryでGA4のセッション参照元情報を作成
+
+1. GA4のテーブルのevent_paramsから必要な情報を抽出
+2. 参照元の追加処理。session_startの参照元などを取得
+3. session_startに参照元(event_traffic_source）が入っていればそれを採用。ない場合はイベントから取得。session_traffic_mediumなどでもIF(s.event_traffic_source IS NOT NULLとしているのは、event_traffic_mediumとしてしまうと、sourceはsession_startから取得しmediumはイベントから取得というミスを防ぐため
+4. 過去にセッション情報が存在する場合はそれを採用
