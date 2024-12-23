@@ -1,14 +1,14 @@
 with ga AS(
--- GA4テーブル
+-- GA4 table
   SELECT *,
   (SELECT value.int_value FROM UNNEST(event_params) WHERE key ='ga_session_id') AS ga_session_id,
   (SELECT value.string_value FROM UNNEST(event_params) WHERE key='source') AS event_traffic_source,
   (SELECT value.string_value FROM UNNEST(event_params) WHERE key='medium') AS event_traffic_medium,
   (SELECT value.string_value FROM UNNEST(event_params) WHERE key='campaign') AS event_traffic_campaign,
-  -- 以下略
+  -- omitting the following
   FROM `project_id.analytics_123456789.events_YYYYMMDD`  
 ),
--- 参照元の追加処理。session_startの参照元などを取得。優先順位はcollected_traffic_sourceカラム＞event_params.sourceカラム＞session_traffic_source_last_clickカラムの順。
+-- Process of adding referents, e.g. to get session_start referents. Priority order is collected_traffic_source column > event_params.source column > session_traffic_source_last_click column.
 session_start AS(
     SELECT *
     FROM(
@@ -32,8 +32,8 @@ session_start AS(
     ) 
     WHERE event_traffic_source IS NOT NULL AND event_traffic_source NOT IN("(not set)","(direct)")  -- 対象となったsession_startイベントのevent_traffic_sourceがNULLや (not set), (direct)の場合は値を返さない ※(not set)や(direct)はないはずですが念のため
 ),
--- 参照元などが入っているイベントのうち一番古いものを取得
-agg_campaign AS(
+-- Retrieve the oldest event with references, etc.
+first_campaign AS(
     SELECT 
         user_pseudo_id,
         ga_session_id,
@@ -58,8 +58,8 @@ agg_campaign AS(
     )
     GROUP BY ALL
 ),
--- session_startに参照元が入っていればそれを採用。ない場合はイベントから取得。session_traffic_mediumなどでもIF(s.event_traffic_source IS NOT NULLとしているのは、event_traffic_mediumとしてしまうと、sourceはsession_startから取得しmediumは最初のイベントから取得というミスを防ぐため
-agg_campaign_first_2 AS(
+-- If session_start contains a reference source, it is used. If not, it is taken from the event. session_traffic_medium etc. also IF (s.event_traffic_source IS NOT NULL because if event_traffic_medium is used, the source is taken from session_start and medium is taken from the first event.
+  adopt_source AS(
     SELECT 
         user_pseudo_id,
         ga_session_id,
@@ -72,9 +72,9 @@ agg_campaign_first_2 AS(
         IF(s.event_traffic_source IS NOT NULL, s.event_traffic_creative_format , a.event_traffic_creative_format ) AS session_traffic_creative_format,
         IF(s.event_traffic_source IS NOT NULL, s.event_traffic_marketing_tactic, a.event_traffic_marketing_tactic) AS session_traffic_marketing_tactic,
         IF(s.event_traffic_source IS NOT NULL, s.event_traffic_campaign_id, a.event_traffic_campaign_id) AS session_traffic_campaign_id
-    FROM agg_campaign a FULL JOIN session_start s USING(user_pseudo_id, ga_session_id)
+    FROM first_campaign a FULL JOIN session_start s USING(user_pseudo_id, ga_session_id)
 ),
--- 過去にセッション情報が存在する場合はそれを採用
+-- If session data exists in the past, it is used.
 mart_session AS(
     SELECT 
         user_pseudo_id,
@@ -90,10 +90,10 @@ mart_session AS(
             session_traffic_marketing_tactic,
             session_traffic_campaign_id
         ) ORDER BY event_date, entrance_timestamp,exit_timestamp ASC LIMIT 1)[OFFSET(0)].*
-    FROM `project_id.mart.sessions`  -- user_pseudo_id、ga_session_id、session_traffic_sourceなどをsessionsテーブルに格納するクエリを別途要作成
+    FROM `project_id.mart.sessions`  -- Another query is required to store user_pseudo_id, ga_session_id, session_traffic_source, etc. in the sessions table.
     GROUP BY ALL
 ),
-agg_campaign_first_3 AS(
+session_source AS(
     SELECT 
         user_pseudo_id,
         ga_session_id,
@@ -108,7 +108,7 @@ agg_campaign_first_3 AS(
             COALESCE(m.session_traffic_marketing_tactic, a.session_traffic_marketing_tactic) AS session_traffic_marketing_tactic,
             COALESCE(m.session_traffic_campaign_id, a.session_traffic_campaign_id) AS session_traffic_campaign_id
         ) LIMIT 1)[OFFSET(0)].*
-    FROM agg_campaign_first_2 a LEFT JOIN mart_session m 
+    FROM adopt_source a LEFT JOIN mart_session m 
     USING(user_pseudo_id, ga_session_id)
     GROUP BY ALL
 )
@@ -117,5 +117,4 @@ a.session_traffic_source,
 a.session_traffic_medium,
 a.session_traffic_campaign
 FROM ga AS g
-LEFT JOIN agg_campaign_first_3 AS a USING (user_pseudo_id, ga_session_id)
-
+LEFT JOIN session_source AS a USING (user_pseudo_id, ga_session_id)
